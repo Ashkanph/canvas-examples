@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+        <title>Speaking mouth</title>
+        <style>
+            html,
+            body {
+                margin: 0;
+                padding: 0;
+                border-spacing: border-box;
+                font-size: 16px;
+            }
+            .container {
+                display: flex;
+                width: 100%;
+                height: 100%;
+                align-items: center;
+                justify-content: center;
+            }
+
+            #stage {
+                width: 200px;
+                height: 200px;
+                position: relative;
+                border-radius: 10px;
+            }
+
+            canvas {
+                position: absolute;
+            }
+            #game-layer {
+                z-index: 1;
+                top: 0;
+                left: 0;
+            }
+            #minimap,
+            #me {
+                z-index: 2;
+                left: 15px;
+                top: 15px;
+                border: 1px solid gray;
+                border-radius: 4px;
+            }
+            #me {
+                z-index: 3;
+            }
+            .solaria-link {
+                float: right;
+                font-size: 12px;
+            }
+        </style>
+    </head>
+    <body>
+        <button id="stop-btn" onclick="stopToggle()">Stop: false</button>
+        <div class="container">
+            <div id="stage">
+                <canvas id="face" width="200" height="200"></canvas>
+                <canvas id="mustaches" width="200" height="200"></canvas>
+            </div>
+        </div>
+    </body>
+    <script>
+        const   GAME_WIDTH = 200,  // The width has been set in the css
+                GAME_HEIGHT = 200,  // The height has been set in the css
+                DEFAULT_MUSTACHE_ANGLE = 0, 
+                MAX_MUSTACHE_ANGLE = (3 * Math.PI / 8) - (Math.PI / 3),
+                MIN_MUSTACHE_ANGLE = (Math.PI / 8) - (Math.PI / 6),
+                SPEAKING_SPEED = Math.PI / 70;
+
+        var items = {
+                face: {
+                    src: 'face-with-no-mustache.svg',
+                    img: null,
+                    loaded: false
+                },
+                left: {
+                    src: 'left-mustache.svg',
+                    img: null,
+                    loaded: false
+                },
+                right: {
+                    src: 'right-mustache.svg',
+                    img: null,
+                    loaded: false
+                }
+            },
+            speaking = true,
+            mustacheDirection = 'downward',
+            rightMustacheAngle = DEFAULT_MUSTACHE_ANGLE;
+
+        var images = [];    // Images: face, left mustache, right mustache
+
+        var fcan = document.getElementById("face");
+        var mcan = document.getElementById("mustaches");
+        var fctx = fcan.getContext("2d");
+        var mctx = mcan.getContext("2d");
+
+        // If the game canvas has been clicked and the
+        //    drawing has not been initialized yet, start the drawing process.
+        fcan.addEventListener('click', function(e) {
+                    if(!initialized) {
+                        start();
+                    }
+                }, false);
+
+
+        // Load images in an array
+        function loadImages() {
+            for(var index in items) {
+                images[index] = {};
+                images[index].img = new Image();   // Create new img element
+                images[index].img.addEventListener('load', function() {
+                    images[index].loaded = true;
+                }, false);
+                
+                images[index].img.src = './images/'+items[index].src;
+            }
+        }
+
+        // Draw the images in the game canvas
+        function drawImages() {
+            // draw the images
+            for(var index in items) {
+                if(index === 'left'){   // draw left mustache
+                    var x = GAME_WIDTH / 2;
+                    var y = GAME_HEIGHT / 2;
+                    var width = images[index].img.width;
+                    
+                    mctx.translate(x, y);
+                    mctx.rotate(-rightMustacheAngle);
+                    mctx.drawImage(images[index].img , -width, 0);
+                    mctx.rotate(rightMustacheAngle);
+                    mctx.translate(-x, -y);
+                }else if(index === 'right'){   // draw right mustache
+                    var x = GAME_WIDTH / 2;
+                    var y = GAME_HEIGHT / 2;
+
+                    mctx.translate(x, y);
+                    mctx.rotate(rightMustacheAngle);
+                    mctx.drawImage(images[index].img , 0, 0);
+                    mctx.rotate(-rightMustacheAngle);
+                    mctx.translate(-x, -y);
+                }else if (index === 'face' && images[index].img ){    // draw the face
+                    fctx.drawImage(images[index].img, 0, 0);
+                }
+            }
+        }
+
+        function clearCanvas(ct, ca) {
+            ct.clearRect(0, 0, ca.width, ca.height);
+        }
+
+        function calcMustacheAngle() {
+            // Update the right mustache angle if the character is speaking
+            if(speaking){ 
+                if (mustacheDirection === 'downward'){
+                    if(rightMustacheAngle > MIN_MUSTACHE_ANGLE) {
+                        rightMustacheAngle -= SPEAKING_SPEED;
+                    }else {
+                        rightMustacheAngle += SPEAKING_SPEED;
+                        mustacheDirection = 'upward';
+                    }
+                } else{ 
+                    if(rightMustacheAngle < MAX_MUSTACHE_ANGLE) {
+                        rightMustacheAngle += SPEAKING_SPEED;
+                    }else {
+                        rightMustacheAngle -= SPEAKING_SPEED;
+                        mustacheDirection = 'downward';
+                    }
+                }
+            }   
+        }
+
+        // Draw everything
+        var render = function() {
+            calcMustacheAngle();
+            clearCanvas(mctx, mcan);
+            drawImages();
+        };
+
+        // Start/stop toggle button has been clicked
+        function stopToggle(e) {
+            stop = !stop;
+            document.getElementById('stop-btn').innerHTML = "Stop: " + stop;
+            if(!stop){
+                animate();
+            }
+        }
+
+        // Cross-browser support for requestAnimationFrame
+        var w = window;
+        requestAnimationFrame =
+            w.requestAnimationFrame ||
+            w.webkitRequestAnimationFrame ||
+            w.msRequestAnimationFrame ||
+            w.mozRequestAnimationFrame;
+
+        var stop = true;
+        var initialized = false;
+        var frameCount = 0;
+        var fps = 13, // redraw per second 
+            fpsInterval, startTime, now, then, elapsed;
+
+        // start drawing the canvas
+        function start() {
+            stop = false;
+            initialized = true;
+            // drawPlayers();
+            loadImages();
+            startAnimating(fps);
+        }
+
+        function startAnimating(fps) {
+            fpsInterval = 1000 / fps;
+            then = Date.now();
+            animate();
+        }
+
+        function animate() {
+            // It is stopped
+            if (stop) {
+                console.log('stop is true');
+                return;
+            }
+
+            // calc elapsed time since last loop
+            now = Date.now();
+            elapsed = now - then;
+
+            // if enough time has elapsed, draw the next frame
+            if (elapsed > fpsInterval) {
+                // Get ready for next frame by setting then=now, but...
+                then = now - (elapsed % fpsInterval); 
+                render();
+            }else {
+                // Get ready for next frame by setting then=now, but...
+                then = now - (elapsed % fpsInterval);
+            }
+
+            // request another frame
+            requestAnimationFrame(animate);
+        }
+
+        start();
+    </script>
+</html>
