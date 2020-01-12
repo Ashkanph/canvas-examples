@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Solaria Canvas</title>
+        <style>
+            html,
+            body {
+                margin: 0;
+                padding: 0;
+            }
+            .container {
+                display: flex;
+                width: 100vw;
+                height: 92vh;
+                align-items: center;
+                justify-content: center;
+            }
+
+            #stage {
+                width: 1000px;
+                height: 600px;
+                position: relative;
+                border: 2px solid black;
+                border-radius: 10px;
+            }
+
+            canvas {
+                position: absolute;
+            }
+            #game-layer {
+                z-index: 1;
+                top: 0;
+                left: 0;
+            }
+            #minimap,
+            #me {
+                z-index: 2;
+                left: 15px;
+                top: 15px;
+                border: 1px solid gray;
+                border-radius: 4px;
+            }
+            #me {
+                z-index: 3;
+            }
+            .solaria-link {
+                float: right;
+                font-size: 12px;
+            }
+        </style>
+    </head>
+    <body>
+        <button id="stop-btn" onclick="stopToggle()">Stop: false</button>
+        <a  href="https://en.wikipedia.org/wiki/The_Naked_Sun" 
+            target="_blank"
+            class="solaria-link">Where is Solaria?</a>
+        <div class="container">
+            <div id="stage">
+                <canvas id="minimap" width="220" height="140"></canvas>
+                <canvas id="me" width="220" height="140"></canvas>
+                <canvas id="game" width="1000" height="600"></canvas>
+            </div>
+        </div>
+    </body>
+    <script>
+        const   MINIMAP_WIDTH = 220,
+                MINIMAP_HEIGHT = 140,
+                GAME_WIDTH = 1000,  // The width has been set in the css
+                GAME_HEIGHT = 600,  // The height has been set in the css
+                HORIZON_Y = 200,    // Horizon's line Y
+                ME_RADIUS = 3,
+                PLAYER_RADIUS = 3,
+                MAX_VISIBLE_RADIUS = Math.PI / 4,
+                MVRH = radianToDegree(MAX_VISIBLE_RADIUS / 2),
+                LONGEST_DISTANCE = Math.ceil(Math.sqrt(MINIMAP_WIDTH * MINIMAP_WIDTH + MINIMAP_HEIGHT * MINIMAP_HEIGHT)),
+                SMALLEST_IMAGE_HEIGHT = 200,
+                MAX_IMAGE_HEIGHT = 950,
+                MIN_IMAGE_HEIGHT = 200,
+                HORRIZON_COLOR = '#ddd',  // Horizon line color
+                PLAYERS_POINT_COLOR = 'green',
+                CAMERA_POINT_COLOR = 'red',
+                RAY_COLOR = 'orange';
+
+        var players = [
+            {
+                x: 100,
+                y: 20,
+                xOnGame: null,
+                imageHeight: null,
+                distance: null,
+                img: 0
+            },
+            {
+                x: 50,
+                y: 30,
+                xOnGame: null,
+                imageHeight: null,
+                distance: null,
+                img: 1
+            },
+            {
+                x: 150,
+                y: 100,
+                xOnGame: null,
+                imageHeight: null,
+                distance: null,
+                img: 2
+            },
+            {
+                x: 80,
+                y: 40,
+                xOnGame: null,
+                imageHeight: null,
+                distance: null,
+                img: 3
+            },
+            {
+                x: 170,
+                y: 80,
+                xOnGame: null,
+                imageHeight: null,
+                distance: null,
+                img: 4
+            },
+            {
+                x: 30,
+                y: 50,
+                xOnGame: null,
+                imageHeight: null,
+                distance: null,
+                img: 5
+            }
+        ];
+
+        var me = {
+            x: Math.ceil(MINIMAP_WIDTH / 2),
+            y: Math.ceil(MINIMAP_HEIGHT / 2),
+            speed: Math.ceil(MINIMAP_WIDTH / 6), // movement in pixels per second
+            radiusSpeed: 0.5, // radius movement speed
+            visibleRadius: Math.PI/4,
+            moving: false,    // Is the red point moving?
+            headBobbing: {    // We use this to stimulate the head bobbing of the camera
+                bobbingIncY: 0.3,
+                bobbingDirY: 1,
+                bobbingAmtY: 0,
+                bobbingMax: 2
+            }
+        };
+
+        var images = [];
+
+        var gcan = document.getElementById("game");
+        var mcan = document.getElementById("minimap");
+        var mecan = document.getElementById("me");
+        var gctx = gcan.getContext("2d");
+        var mctx = mcan.getContext("2d");
+        var mectx = mecan.getContext("2d");
+
+        // Show an alert when the red point has been clicked
+        mecan.addEventListener('click', function(e) {
+                    const mouseCoordinates = getMousePos(mecan, e);
+
+                    if( mouseCoordinates.x < Math.ceil(me.x+4) && 
+                        mouseCoordinates.x > Math.ceil(me.x-4) &&
+                        mouseCoordinates.y < Math.ceil(me.y+4) &&
+                        mouseCoordinates.y > Math.ceil(me.y-4) ){
+                        alert("Here lies the second one whose name was writ in water.");
+                    }
+                }, false);
+
+        // If the game canvas has been clicked and the
+        //    drawing has not been initialized yet, start the drawing process.
+        gcan.addEventListener('click', function(e) {
+                    if(!initialized) {
+                        start();
+                    }
+                }, false);
+
+        // Get the mouse position of click event on the canvas
+        function getMousePos(canvas, evt) {
+            var rect = canvas.getBoundingClientRect();
+            return {
+                x: evt.clientX - rect.left,
+                y: evt.clientY - rect.top
+            };
+        }
+
+        // Load avatar images in an array
+        function loadImages() {
+            for(var index in players) {
+                images[index] = {};
+                images[index].img = new Image();   // Create new img element
+                images[index].img.addEventListener('load', function() {
+                    images[index].loaded = true;
+                }, false);
+                images[index].img.src = './chars/'+index+'.svg';
+            }
+        }
+
+        // Draw the avatar images in the game canvas
+        function drawImages() {
+            // First sort the array of avatars by their distance from the camera
+            players.sort((a, b) => (a.distance < b.distance) ? 1 : -1);
+
+            // draw the avatar images
+            for(var index in players) {
+                var p = players[index];
+                var xOnGame = p.xOnGame;
+                var ohld = LONGEST_DISTANCE / 100;
+
+                if(xOnGame && p.imageHeight) {
+                    gctx.save();
+                    gctx.globalAlpha = 1.5 - (0.01 * p.distance/ohld); // Set an opacity for the far avatars
+                    const sepia = (0.01 * p.distance/ohld) - 0.1;
+                    var blur = 0.01 * p.distance/ohld;  // Make far avatars blur
+                    if(p.distance > 60) 
+                        blur += 0.4;
+                    gctx.filter = 'grayscale(' + sepia + ') blur(' + blur + 'px)';  // Implement filters
+                    var imageWidth = p.imageHeight * images[p.img].img.width / images[p.img].img.height;
+                    gctx.drawImage(images[p.img].img, xOnGame - imageWidth/2, HORIZON_Y - 50, imageWidth, p.imageHeight);
+                    gctx.restore();
+                }
+            }
+        }
+
+        // Draw point in the minimap (except than the camera red point)
+        function drawPlayers() {
+            for (const p of players) {
+                mctx.beginPath();
+                mctx.arc(p.x, p.y, PLAYER_RADIUS, 0, Math.PI * 2, true);
+                mctx.fillStyle = PLAYERS_POINT_COLOR;
+                mctx.fill();
+            }
+        }
+
+        // Draw horizon line
+        function drawHorizon() {
+            gctx.save();
+            gctx.lineWidth = 2;
+            gctx.shadowColor = HORRIZON_COLOR;
+            gctx.shadowBlur = 15; // Shadow is not good for performance
+            gctx.shadowOffsetY = 5;
+            gctx.strokeStyle = HORRIZON_COLOR;
+
+            gctx.moveTo(0, HORIZON_Y);            
+            gctx.lineTo(GAME_WIDTH, HORIZON_Y);
+            gctx.stroke();
+            gctx.restore();
+        }
+        
+        // Draw my point and the viewable angle
+        function drawMe() {
+            mectx.beginPath();
+            mectx.arc(me.x, me.y, ME_RADIUS, 0, Math.PI * 2);
+            mectx.fillStyle = CAMERA_POINT_COLOR;
+            mectx.fill();
+            mectx.closePath();
+            mectx.save();
+            mectx.arc(
+                me.x,
+                me.y,
+                MINIMAP_WIDTH * 2,
+                me.visibleRadius - MAX_VISIBLE_RADIUS / 2,
+                me.visibleRadius + MAX_VISIBLE_RADIUS / 2
+            );
+            
+            mectx.globalAlpha = 0.3;
+            mectx.fillStyle = RAY_COLOR;
+            mectx.fill();
+            mectx.closePath();
+            mectx.restore();
+
+        }
+
+        // Handle keyboard controls
+        var keysDown = {};
+
+        addEventListener(
+            "keydown",
+            function(e) {
+                if(e.keyCode > 36 && e.keyCode < 41)
+                    me.moving = true;
+                keysDown[e.keyCode] = true;
+            },
+            false
+        );
+
+        addEventListener(
+            "keyup",
+            function(e) {
+                if(e.keyCode > 36 && e.keyCode < 41)
+                    me.moving = false;
+                delete keysDown[e.keyCode];
+            },
+            false
+        );
+
+        function clearCanvas(ct, ca) {
+            ct.clearRect(0, 0, ca.width, ca.height);
+        }
+
+        // Update objects
+        var update = function(modifier) {
+            var oldMeX = me.x,
+                oldMeY = me.y;
+            if (38 in keysDown) {
+                // Player holding up
+                me.y -= me.speed * modifier;
+            }
+            if (40 in keysDown) {
+                // Player holding down
+                me.y += me.speed * modifier;
+            }
+            if (37 in keysDown) {
+                // Player holding left
+                me.x -= me.speed * modifier;
+            }
+            if (39 in keysDown) {
+                // Player holding right
+                me.x += me.speed * modifier;
+            }
+            if (68 in keysDown) {
+                // Player holding d
+                me.visibleRadius += me.radiusSpeed * modifier;
+            }
+            if (65 in keysDown) {
+                // Player holding a
+                me.visibleRadius -= me.radiusSpeed * modifier;
+            }
+
+            // out of minimap?
+            if (
+                me.x < ME_RADIUS ||
+                me.x > MINIMAP_WIDTH - ME_RADIUS ||
+                me.y < ME_RADIUS ||
+                me.y > MINIMAP_HEIGHT - ME_RADIUS
+            ) {
+                me.x = oldMeX;
+                me.y = oldMeY;
+            }
+
+            // Update head bobbing details if the character is moving
+            if(me.moving){ 
+                if (me.headBobbing.bobbingDirY === 1) {  // to the top
+                    me.headBobbing.bobbingAmtY -= me.headBobbing.bobbingIncY;
+                    if (me.headBobbing.bobbingAmtY < -me.headBobbing.bobbingMax) {
+                        me.headBobbing.bobbingDirY = -1;
+                    }
+                } else {  // to the bottom
+                    me.headBobbing.bobbingAmtY += me.headBobbing.bobbingIncY;
+                    if(me.headBobbing.bobbingAmtY > me.headBobbing.bobbingMax) {
+                        me.headBobbing.bobbingDirY = 1;
+                    }
+                }
+            }          
+        };
+
+        // Draw everything
+        var render = function() {
+            drawMe();
+            calcPlayersXOnGame();
+            clearCanvas(gctx, gcan);
+            drawHorizon();
+            drawImages();
+            if(me.moving){
+                gctx.translate(0, me.headBobbing.bobbingAmtY);
+            }
+        };
+
+        // Start/stop toggle button has been clicked
+        function stopToggle(e) {
+            stop = !stop;
+            document.getElementById('stop-btn').innerHTML = "Stop: " + stop;
+            if(!stop){
+                animate();
+            }
+        }
+
+        function radianToDegree(r) {
+           var deg = (((r + Math.PI) * 180 / Math.PI) + 180) % 360;
+           return deg < 0 ? 360 + deg : deg;
+        }
+
+        function calcAngleDegrees(x, y) {
+           return radianToDegree(Math.atan2(y, x));
+        }
+
+        function playerX(teta, visibleRadiusDegree) {
+            return GAME_WIDTH * (visibleRadiusDegree + MVRH - teta) / (MVRH*2);
+        }
+        
+        // Calculate position of the avatar images on the x-axis, 
+        //    their height and their distance from the camera point 
+        function calcPlayersXOnGame() {
+            var index = 0;
+            for (let p of players) {
+                var teta =  calcAngleDegrees(p.x-me.x, -1 * (p.y-me.y));
+                var distance = Math.ceil(Math.sqrt(Math.pow(me.x-p.x, 2) + Math.pow(me.y-p.y, 2)));
+                
+                var imageHeight = Math.ceil(MAX_IMAGE_HEIGHT - ((1/200)*MAX_IMAGE_HEIGHT*distance/(LONGEST_DISTANCE/200)));
+                
+                var visibleRadiusDegree = radianToDegree(-1 * me.visibleRadius); 
+                    p.xOnGame = playerX(teta, visibleRadiusDegree);
+                    p.imageHeight = imageHeight;
+                    p.distance = distance;
+            }
+        }
+
+        // Cross-browser support for requestAnimationFrame
+        var w = window;
+        requestAnimationFrame =
+            w.requestAnimationFrame ||
+            w.webkitRequestAnimationFrame ||
+            w.msRequestAnimationFrame ||
+            w.mozRequestAnimationFrame;
+
+        var stop = true;
+        var initialized = false;
+        var frameCount = 0;
+        var fps = 13, // redraw per second 
+            fpsInterval, startTime, now, then, elapsed;
+
+
+        // Write the first lines of manual
+        gctx.fillStyle = "gray";
+        gctx.font = "28px Helvetica";
+        gctx.textAlign = "left";
+        gctx.textBaseline = "top";
+        gctx.fillText("Use arrow keys to move", GAME_WIDTH/3, GAME_HEIGHT/3);
+        gctx.fillText('Use "a" or "d" to pan the camera', GAME_WIDTH/3 - 50, GAME_HEIGHT/3 + 50);
+        gctx.fillText('Click here to start', GAME_WIDTH/3 + 40, GAME_HEIGHT/3 + 150);
+
+        // start drawing the canvas
+        function start() {
+            stop = false;
+            initialized = true;
+            drawPlayers();
+            loadImages();
+            drawHorizon()
+            startAnimating(fps);
+        }
+
+        function startAnimating(fps) {
+            fpsInterval = 1000 / fps;
+            then = Date.now();
+            animate();
+        }
+
+        function animate() {
+            // It is stopped
+            if (stop) {
+                console.log('stop is true');
+                return;
+            }
+
+            // calc elapsed time since last loop
+            now = Date.now();
+            elapsed = now - then;
+
+            // if enough time has elapsed, draw the next frame
+            if (elapsed > fpsInterval) {
+                update(elapsed / 4000);
+                // Get ready for next frame by setting then=now, but...
+                then = now - (elapsed % fpsInterval); 
+                
+                clearCanvas(mectx, mecan);  // Clear the canvas contains my point (red point)
+                gctx.save();
+                gctx.translate(0, 10); 
+                clearCanvas(gctx, gcan);    // Clear the canvas contains the avatar images
+                gctx.restore();
+                render();
+            }else {
+                update(elapsed / 4000);
+                // Get ready for next frame by setting then=now, but...
+                then = now - (elapsed % fpsInterval);
+            }
+
+            // request another frame
+            requestAnimationFrame(animate);
+        }
+    </script>
+</html>

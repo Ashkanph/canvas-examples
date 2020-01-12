@@ -1,2 +1,2 @@
-# canvas-playground
-HTML5 Canvas Playgound
+# canvas-example
+My HTML5 Canvas tests
